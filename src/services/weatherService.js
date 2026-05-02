@@ -1,4 +1,4 @@
-const API_KEY = import.meta.env.VITE_WEATHER_API_KEY;
+const API_KEY = import.meta.env.VITE_OWM_API_KEY;
 const BASE_URL = "https://api.openweathermap.org/data/2.5/weather";
 
 export async function getCurrentWeather(city = "Hubballi") {
@@ -21,4 +21,4 @@ export async function getCurrentWeather(city = "Hubballi") {
 }
 
 // Fetch weather on load for quick testing
-getCurrentWeather();
+// getCurrentWeather();
