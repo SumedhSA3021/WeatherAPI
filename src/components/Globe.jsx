@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, memo } from "react";
 import * as THREE from "three";
 
 const ATMO_VS = `varying vec3 vN;void main(){vN=normalize(normalMatrix*normal);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`;
@@ -20,7 +20,7 @@ function makeGlow() {
   return new THREE.CanvasTexture(c);
 }
 
-export default function Globe({ coordinates, zoomTarget = 2.2, animTrigger = 0, resetTrigger = 0, onRotateDone, onZoomDone, onResetDone, visible = true }) {
+export default memo(function Globe({ coordinates, zoomTarget = 2.2, animTrigger = 0, resetTrigger = 0, onRotateDone, onZoomDone, onResetDone, visible = true }) {
   const mountRef = useRef(null);
   const sRef = useRef(null);
   const cbRef = useRef({});
@@ -33,12 +33,17 @@ export default function Globe({ coordinates, zoomTarget = 2.2, animTrigger = 0, 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 1000);
     camera.position.set(0, 0, 5);
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
-    renderer.setSize(w, h); renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+
+    // Lower pixel ratio on mobile to reduce GPU load
+    const isMobileDevice = window.innerWidth < 768;
+    const renderer = new THREE.WebGLRenderer({ antialias: !isMobileDevice, alpha: true, powerPreference: "high-performance" });
+    renderer.setSize(w, h);
+    renderer.setPixelRatio(Math.min(devicePixelRatio, isMobileDevice ? 1.5 : 2));
     el.appendChild(renderer.domElement);
 
-    // Stars
-    const sv = new Float32Array(2500 * 3);
+    // Stars — fewer on mobile
+    const starCount = isMobileDevice ? 1200 : 2500;
+    const sv = new Float32Array(starCount * 3);
     for (let i = 0; i < sv.length; i += 3) {
       const r = 40 + Math.random() * 60, t = Math.random() * Math.PI * 2, p = Math.acos(2 * Math.random() - 1);
       sv[i] = r * Math.sin(p) * Math.cos(t); sv[i + 1] = r * Math.sin(p) * Math.sin(t); sv[i + 2] = r * Math.cos(p);
@@ -51,15 +56,16 @@ export default function Globe({ coordinates, zoomTarget = 2.2, animTrigger = 0, 
     const loader = new THREE.TextureLoader();
     const tex = loader.load("https://unpkg.com/three-globe/example/img/earth-night.jpg");
     tex.colorSpace = THREE.SRGBColorSpace;
+    const segCount = isMobileDevice ? 48 : 64;
     const globe = new THREE.Mesh(
-      new THREE.SphereGeometry(R, 64, 64),
+      new THREE.SphereGeometry(R, segCount, segCount),
       new THREE.MeshPhongMaterial({ map: tex, emissiveMap: tex, emissive: new THREE.Color(0x112244), emissiveIntensity: 0.7, shininess: 15 })
     );
     scene.add(globe);
 
     // Atmosphere
     scene.add(new THREE.Mesh(
-      new THREE.SphereGeometry(R * 1.12, 64, 64),
+      new THREE.SphereGeometry(R * 1.12, segCount, segCount),
       new THREE.ShaderMaterial({ vertexShader: ATMO_VS, fragmentShader: ATMO_FS, blending: THREE.AdditiveBlending, side: THREE.BackSide, transparent: true })
     ));
 
@@ -116,12 +122,25 @@ export default function Globe({ coordinates, zoomTarget = 2.2, animTrigger = 0, 
     }
     tick();
 
-    const onResize = () => {
+    // Resize handler — covers both resize and orientation change
+    const handleResize = () => {
       const nw = el.clientWidth, nh = el.clientHeight;
       camera.aspect = nw / nh; camera.updateProjectionMatrix(); renderer.setSize(nw, nh);
     };
-    window.addEventListener("resize", onResize);
-    return () => { window.removeEventListener("resize", onResize); cancelAnimationFrame(s.frameId); renderer.dispose(); if (el.contains(renderer.domElement)) el.removeChild(renderer.domElement); sRef.current = null; };
+    window.addEventListener("resize", handleResize);
+
+    // Orientation change handler with delay for orientation to settle
+    const handleOrientation = () => { setTimeout(handleResize, 200); };
+    window.addEventListener("orientationchange", handleOrientation);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      window.removeEventListener("orientationchange", handleOrientation);
+      cancelAnimationFrame(s.frameId);
+      renderer.dispose();
+      if (el.contains(renderer.domElement)) el.removeChild(renderer.domElement);
+      sRef.current = null;
+    };
   }, []);
 
   /* ── Start animation — exact rotation formula ── */
@@ -129,18 +148,16 @@ export default function Globe({ coordinates, zoomTarget = 2.2, animTrigger = 0, 
     const s = sRef.current; if (!s || animTrigger === 0 || !coordinates) return;
     const { lat, lon } = coordinates;
 
-    // Exact rotation: lon → Y rotation, lat → X rotation (negated)
     const targetRotY = (lon * Math.PI) / 180;
     const targetRotX = -(lat * Math.PI) / 180;
 
-    // Normalize current Y to avoid multi-revolution lerp
     s.globe.rotation.y = s.globe.rotation.y % (Math.PI * 2);
     s.targetX = targetRotX;
     s.targetY = targetRotY;
-    s.zt = zoomTarget;
+    // Mobile zoom closer by 0.85x
+    s.zt = window.innerWidth < 768 ? zoomTarget * 0.85 : zoomTarget;
     s.mode = "rotating";
 
-    // Pin placement — must match rotation coordinate system
     const PIN_R = s.R * 1.01;
     const phi = (90 - lat) * (Math.PI / 180);
     const theta = lon * (Math.PI / 180);
@@ -165,4 +182,4 @@ export default function Globe({ coordinates, zoomTarget = 2.2, animTrigger = 0, 
       style={{ opacity: visible ? 1 : 0 }}
     />
   );
-}
+});
